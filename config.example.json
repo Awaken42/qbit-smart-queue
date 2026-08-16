@@ -1,0 +1,12 @@
+{
+  "QbitUrl": "http://127.0.0.1:8080",
+  "MinSpeedKiB": 500,
+  "SlowSeconds": 180,
+  "CheckIntervalSeconds": 10,
+  "CooldownMinutes": 30,
+  "RevisitGraceSeconds": 30,
+  "StartupGraceSeconds": 45,
+  "StatusLogEverySeconds": 60,
+  "LogRetentionDays": 14,
+  "DryRun": false
+}
