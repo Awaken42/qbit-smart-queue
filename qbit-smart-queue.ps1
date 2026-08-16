@@ -6,7 +6,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 
 $script:AppName = "qBit Smart Queue"
-$script:Version = "0.3.0"
+$script:Version = "0.3.1"
 $script:BaseDir = $PSScriptRoot
 $script:LogDir = Join-Path $script:BaseDir "logs"
 $script:StatusPath = Join-Path $script:BaseDir "status.json"
@@ -46,6 +46,7 @@ function Load-Config {
         "QbitUrl",
         "MinSpeedKiB",
         "SlowSeconds",
+        "MetadataTimeoutSeconds",
         "CheckIntervalSeconds",
         "CooldownMinutes",
         "RevisitGraceSeconds",
@@ -182,7 +183,7 @@ function Get-CurrentTorrent {
     $Torrents |
         Where-Object {
             $_.progress -lt 1 -and
-            $_.state -in @("downloading", "stalledDL") -and
+            $_.state -in @("downloading", "stalledDL", "metaDL") -and
             -not (Is-ForceStarted $_)
         } |
         Sort-Object priority |
@@ -238,6 +239,7 @@ try {
         Remove-Item -Force -ErrorAction SilentlyContinue
 
     $slowSince = @{}
+    $watchMode = @{}
     $retryAfter = Load-RetryState
     $lastStatusLog = [datetime]::MinValue
     $connectedOnce = $false
@@ -262,6 +264,7 @@ try {
 
             if ($null -eq $current) {
                 $slowSince.Clear()
+                $watchMode.Clear()
                 Write-Status -Connection "connected" -Note "No active monitored download"
 
                 if (((Get-Date) - $lastStatusLog).TotalSeconds -ge [int]$config.StatusLogEverySeconds) {
@@ -277,17 +280,30 @@ try {
             $thresholdBytes = [double]$config.MinSpeedKiB * 1KB
             $now = Get-Date
             $next = Get-NextQueuedTorrent -Torrents $torrents -ExcludeHash $current.hash
+            $isMetadata = ([string]$current.state -eq "metaDL")
+            $currentMode = if ($isMetadata) { "metadata" } else { "speed" }
 
-            Write-Status -Connection "connected" -Current $current -SpeedKiB $speedKiB
+            Write-Status -Connection "connected" -Current $current -SpeedKiB $speedKiB `
+                -Note $(if ($isMetadata) { "Fetching metadata" } else { "" })
 
             if (($now - $lastStatusLog).TotalSeconds -ge [int]$config.StatusLogEverySeconds) {
-                Write-Log ("'{0}' | {1} | {2:N0} KiB/s" -f $current.name, $current.state, $speedKiB)
+                if ($isMetadata) {
+                    Write-Log ("'{0}' | metaDL | fetching metadata" -f $current.name)
+                }
+                else {
+                    Write-Log ("'{0}' | {1} | {2:N0} KiB/s" -f $current.name, $current.state, $speedKiB)
+                }
                 $lastStatusLog = $now
             }
 
-            if ([double]$current.dlspeed -ge $thresholdBytes) {
+            # Normal downloads recover when speed rises above the threshold.
+            # Metadata fetching is handled by its own timeout instead of download speed.
+            if (-not $isMetadata -and [double]$current.dlspeed -ge $thresholdBytes) {
                 if ($slowSince.ContainsKey($current.hash)) {
                     $slowSince.Remove($current.hash)
+                }
+                if ($watchMode.ContainsKey($current.hash)) {
+                    $watchMode.Remove($current.hash)
                 }
 
                 if ($retryAfter.ContainsKey($current.hash)) {
@@ -305,14 +321,22 @@ try {
                 if ($slowSince.ContainsKey($current.hash)) {
                     $slowSince.Remove($current.hash)
                 }
+                if ($watchMode.ContainsKey($current.hash)) {
+                    $watchMode.Remove($current.hash)
+                }
 
                 Start-Sleep -Seconds ([int]$config.CheckIntervalSeconds)
                 continue
             }
 
-            $requiredSlowSeconds = [int]$config.SlowSeconds
+            $requiredSlowSeconds = if ($isMetadata) {
+                [int]$config.MetadataTimeoutSeconds
+            } else {
+                [int]$config.SlowSeconds
+            }
 
-            # Recently skipped torrents only get a short grace window when they return still slow.
+            # Recently skipped torrents only get a short grace window when they return
+            # and are still slow / still stuck fetching metadata.
             if ($retryAfter.ContainsKey($current.hash)) {
                 if ($retryAfter[$current.hash] -gt $now) {
                     $requiredSlowSeconds = [int]$config.RevisitGraceSeconds
@@ -323,10 +347,22 @@ try {
                 }
             }
 
-            if (-not $slowSince.ContainsKey($current.hash)) {
+            # Reset the timer if the torrent changes mode, e.g. metaDL -> downloading.
+            if (-not $slowSince.ContainsKey($current.hash) -or
+                -not $watchMode.ContainsKey($current.hash) -or
+                $watchMode[$current.hash] -ne $currentMode) {
+
                 $slowSince[$current.hash] = $now
-                Write-Log ("'{0}' is below threshold ({1:N0} KiB/s). Timer started; limit={2}s." -f `
-                    $current.name, $speedKiB, $requiredSlowSeconds) "WARN"
+                $watchMode[$current.hash] = $currentMode
+
+                if ($isMetadata) {
+                    Write-Log ("'{0}' is fetching metadata. Timer started; metadata limit={1}s." -f `
+                        $current.name, $requiredSlowSeconds) "WARN"
+                }
+                else {
+                    Write-Log ("'{0}' is below threshold ({1:N0} KiB/s). Timer started; limit={2}s." -f `
+                        $current.name, $speedKiB, $requiredSlowSeconds) "WARN"
+                }
 
                 Start-Sleep -Seconds ([int]$config.CheckIntervalSeconds)
                 continue
@@ -338,14 +374,23 @@ try {
                 continue
             }
 
-            Write-Log ("'{0}' stayed below {1} KiB/s for {2:N0}s. Rotating." -f `
-                $current.name, $config.MinSpeedKiB, $slowFor) "ACTION"
+            if ($isMetadata) {
+                Write-Log ("'{0}' stayed in metaDL for {1:N0}s. Rotating." -f `
+                    $current.name, $slowFor) "ACTION"
+            }
+            else {
+                Write-Log ("'{0}' stayed below {1} KiB/s for {2:N0}s. Rotating." -f `
+                    $current.name, $config.MinSpeedKiB, $slowFor) "ACTION"
+            }
 
             Rotate-Torrent -Current $current -Next $next -Config $config -Headers $headers
 
             $retryAfter[$current.hash] = (Get-Date).AddMinutes([int]$config.CooldownMinutes)
             Save-RetryState -RetryAfter $retryAfter
             $slowSince.Remove($current.hash)
+            if ($watchMode.ContainsKey($current.hash)) {
+                $watchMode.Remove($current.hash)
+            }
 
             Start-Sleep -Seconds ([math]::Max(5, [int]$config.CheckIntervalSeconds))
         }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+- Added support for qBittorrent `metaDL` / **Downloading metadata**
+- Magnet torrents stuck fetching metadata are rotated after `MetadataTimeoutSeconds` (default 180s)
+- Metadata timeout is independent of the normal 500 KiB/s speed threshold
+- Timer resets cleanly when a torrent transitions from metadata fetching to normal downloading
+- Installer now preserves existing user settings and merges new config defaults during upgrades
+
 ## 0.3.0
 
 - Added `install.cmd` as the recommended Windows installer

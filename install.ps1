@@ -50,7 +50,7 @@ function Test-QbitUrl {
 
 Write-Host ""
 Write-Host "========================================="
-Write-Host " qBit Smart Queue installer v0.3.0"
+Write-Host " qBit Smart Queue installer v0.3.1"
 Write-Host "========================================="
 Write-Host ""
 
@@ -62,28 +62,34 @@ New-Item -ItemType Directory -Force -Path (Join-Path $installDir "logs") | Out-N
 Copy-Item (Join-Path $sourceDir "qbit-smart-queue.ps1") $installedScript -Force
 
 $existingConfig = Test-Path $installedConfig
+$template = Get-Content -Raw (Join-Path $sourceDir "config.example.json") | ConvertFrom-Json
 
-if ($existingConfig -and $KeepExistingConfig) {
-    Write-Host "Keeping existing config:"
-    Write-Host "  $installedConfig"
+if ($existingConfig) {
+    # Preserve all existing user settings and add any new defaults introduced by upgrades.
+    $old = Get-Content -Raw $installedConfig | ConvertFrom-Json
+    $merged = [ordered]@{}
+
+    foreach ($prop in $template.PSObject.Properties) {
+        if ($old.PSObject.Properties.Name -contains $prop.Name) {
+            $merged[$prop.Name] = $old.($prop.Name)
+        }
+        else {
+            $merged[$prop.Name] = $prop.Value
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($QbitUrl)) {
+        $merged["QbitUrl"] = $QbitUrl
+    }
+
+    $merged | ConvertTo-Json | Set-Content -Path $installedConfig -Encoding UTF8
+    Write-Host "Existing config preserved and upgraded with any new defaults."
 }
 else {
     if ([string]::IsNullOrWhiteSpace($QbitUrl)) {
-        $defaultUrl = "http://127.0.0.1:8080"
-
-        if ($existingConfig) {
-            try {
-                $old = Get-Content -Raw $installedConfig | ConvertFrom-Json
-                if (-not [string]::IsNullOrWhiteSpace([string]$old.QbitUrl)) {
-                    $defaultUrl = [string]$old.QbitUrl
-                }
-            } catch {}
-        }
-
-        $QbitUrl = Ask-Value "qBittorrent Web UI URL" $defaultUrl
+        $QbitUrl = Ask-Value "qBittorrent Web UI URL" "http://127.0.0.1:8080"
     }
 
-    $template = Get-Content -Raw (Join-Path $sourceDir "config.example.json") | ConvertFrom-Json
     $template.QbitUrl = $QbitUrl
     $template | ConvertTo-Json | Set-Content -Path $installedConfig -Encoding UTF8
 }

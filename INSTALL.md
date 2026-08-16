@@ -45,3 +45,7 @@ If an existing config is present, the installer uses its current qBittorrent URL
 ## Uninstall
 
 Double-click `uninstall.cmd`.
+
+## Downloading metadata
+
+Magnet links stuck in qBittorrent's `metaDL` / **Downloading metadata** state are also monitored. The default timeout is 180 seconds and can be changed with `MetadataTimeoutSeconds` in the installed `config.json`.

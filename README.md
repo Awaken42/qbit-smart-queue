@@ -11,7 +11,8 @@ qBittorrent's built-in **Do not count slow torrents in these limits** can cause 
 ## Features
 
 - Below-speed timeout, default **500 KiB/s for 3 minutes**
-- Handles `downloading` and `stalledDL`
+- Detects magnets stuck on **Downloading metadata (`metaDL`)** and rotates them after a separate timeout
+- Handles `downloading`, `stalledDL` and `metaDL`
 - Sends slow torrent to the bottom of the queue
 - 30-minute cooldown / short retry grace for repeatedly bad torrents
 - Single-instance protection
@@ -109,6 +110,7 @@ on machines with an `AllSigned` execution policy, because Windows will reject th
   "QbitUrl": "http://127.0.0.1:8080",
   "MinSpeedKiB": 500,
   "SlowSeconds": 180,
+  "MetadataTimeoutSeconds": 180,
   "CheckIntervalSeconds": 10,
   "CooldownMinutes": 30,
   "RevisitGraceSeconds": 30,
@@ -134,6 +136,8 @@ Example:
 7. Re-enable Torrent A so it remains queued for a later retry.
 
 A recently skipped torrent that comes back during its cooldown gets only a short retry grace window. If it recovers above the configured threshold, the cooldown is cleared.
+
+For magnet links, `metaDL` is treated separately: if qBittorrent remains on **Downloading metadata** for `MetadataTimeoutSeconds` (default 180 seconds), that torrent is rotated to the bottom and the next queued download gets a chance.
 
 # Status
 
@@ -177,6 +181,7 @@ Important options:
 
 - `MinSpeedKiB` — minimum acceptable speed
 - `SlowSeconds` — time below threshold before rotating
+- `MetadataTimeoutSeconds` — maximum time a magnet may remain in Downloading metadata before rotating
 - `CooldownMinutes` — how long a recently skipped torrent is remembered
 - `RevisitGraceSeconds` — short grace period if it returns during cooldown
 - `DryRun` — log actions without changing the queue
