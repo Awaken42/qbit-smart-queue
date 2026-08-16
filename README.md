@@ -4,6 +4,10 @@ A lightweight Windows helper for qBittorrent that keeps a one-at-a-time download
 
 When the active torrent stays below a configurable speed for long enough, qBit Smart Queue moves it to the bottom and lets the next queued torrent try. It never deletes the torrent or its data.
 
+## How it works
+
+![qBit Smart Queue workflow](qbit-smart-queue-demo.png)
+
 ## Why
 
 qBittorrent's built-in **Do not count slow torrents in these limits** can cause several slow torrents to run at the same time. qBit Smart Queue instead keeps **one active download** and rotates genuinely slow/stalled torrents out of the way.
